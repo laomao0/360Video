@@ -20,8 +20,8 @@ tile_size = '480x480'  # width x height
 Width_pix = 3840
 Height_pix = 1920
 
-TileNum_w = 8;
-TileNum_h = 4;
+TileNum_w = 8
+TileNum_h = 4
 
 BitNum = ['200k', '400k', '600k', '800k', '1000k']
 
