@@ -315,3 +315,6 @@ cooked_bw_trace/trace_380_http---www.ebay.com
 cooked_bw_trace/trace_380_http---www.facebook.com
 cooked_bw_trace/trace_380_http---www.google.com-mobile-
 cooked_fov_trace/diving_user01_tile.csv
+fixed_env.pyc
+load_fov_traces.pyc
+*.pyc

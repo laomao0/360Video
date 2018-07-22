@@ -1,0 +1,222 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
+# file name: 360videompc.py
+# Intro: this program simulate the tiled 360 video streaming using MPC ABR algorithm
+
+# author: shenwang@sjtu.edu.cn
+# date: 2018/7/20
+
+import numpy as np
+import load_fov_traces
+import load_throughput_trace
+import load_tile_chunk_video_size
+import fixed_env as env
+import matplotlib.pyplot as plt
+import itertools
+
+S_INFO = 5  # bitr_ate, buffer_size, rebuffering_time, bandwidth_measurement, chunk_til_video_end
+S_LEN = 8  # take how many frames in the past to predict the next chunk
+PAST_FRAME = 15  # take how many frames in the past to predict the next chunk fov tiles
+TILES_BIT_RATE = [200, 400, 600, 800, 1000]  # Kbps
+A_DIM = 5
+MPC_FUTURE_CHUNK_COUNT = 4
+PAST_BW_TO_PREDICT = 5
+BUFFER_NORM_FACTOR = 10.0
+CHUNK_TIL_VIDEO_END_CAP = 120.0
+TOTAL_VIDEO_CHUNKS = 120.0
+M_IN_K = 1000.0
+REBUF_PENALTY = 4.0
+SMOOTH_PENALTY = 1
+DEFAULT_QUALITY = 1  # default quality
+RANDOOM_SEED = 42
+RAND_RANGE = 1000000
+GOP = 15  # gop=15 frames
+VIDEO_CHUNK_LEN = 0.5  # sec
+
+SUMMARY_DIR = './results'
+LOG_FILE = './results/log_sim_mpc'
+
+CHUNK_COMBO_OPTIONS = []
+
+# past errors in bandwidth
+past_errors = []
+past_bandwidth_ests = []
+
+
+def main():
+    np.random.seed(RANDOOM_SEED)
+
+    assert len(TILES_BIT_RATE) == A_DIM
+
+    all_cooked_time, all_cooked_bw, all_file_names = load_throughput_trace.load_throughput_trace()
+    all_cooked_tiles = load_fov_traces.load_fov_traces()
+    all_tile_chunk_video_size = load_tile_chunk_video_size.load_tile_chunk_video_size()
+
+    net_env = env.Environment(all_cooked_time=all_cooked_time,
+                              all_cooked_bw=all_cooked_bw,
+                              all_cooked_tiles=all_cooked_tiles,
+                              all_tile_chunk_video_size=all_tile_chunk_video_size)
+
+    log_path = LOG_FILE + '_' + all_file_names[net_env.bw_trace_idx]
+    log_file = open(log_path, 'wb')
+
+    time_stamp = 0
+    last_bit_rate = DEFAULT_QUALITY
+    bit_rate = DEFAULT_QUALITY
+
+    action_vec = np.zeros(A_DIM)
+    action_vec[bit_rate] = 1
+
+    s_batch = [np.zeros((S_INFO, S_LEN))]
+    a_batch = [action_vec]
+    r_batch = []
+
+    video_count = 0
+
+    # make chunk combination options
+    # this combo is used for future optimization
+    for combo in itertools.product(list(range(MPC_FUTURE_CHUNK_COUNT + 1)), repeat=MPC_FUTURE_CHUNK_COUNT):
+        CHUNK_COMBO_OPTIONS.append(combo)
+        # print(combo)
+
+    while True:  # serve video forever
+        # the action is from the last decision
+        delay, sleep_time, buffer_size, rebuf, \
+            video_chunk_size, \
+            end_of_video, video_chunk_remain, \
+            video_chunk_quality, \
+            basic_video_chunk_quality, \
+            highest_video_chunk_quality = \
+            net_env.fetch_video_chunk(bit_rate)
+
+        time_stamp += delay  # ms
+        time_stamp += sleep_time  # in ms
+
+        # initialize the last_video chunk quality
+        if (net_env.video_chunk_counter == 1):
+            last_video_chunk_quality = video_chunk_quality
+
+        # reward is video quality - rebuffer_penalty
+        reward = video_chunk_quality / M_IN_K \
+                 - REBUF_PENALTY * rebuf \
+                 - SMOOTH_PENALTY * np.abs(last_video_chunk_quality -
+                                           video_chunk_quality) / M_IN_K
+
+        # log scale reward
+        # log_chunk_quality = np.log(video_chunk_quality / float(basic_video_chunk_quality))
+        # log_last_chunk_quality = np.log(last_video_chunk_quality / float(basic_video_chunk_quality))
+        # reward = log_chunk_quality \
+        #             - REBUF_PENALTY * rebuf \
+        #             - SMOOTH_PENALTY * np.abs( log_chunk_quality - log_last_chunk_quality)
+
+        r_batch.append(reward)
+        last_video_chunk_quality = video_chunk_quality
+
+        # log time_stamp, video_chunk_quality, buffer_size, reward
+        log_file.write(str(time_stamp / M_IN_K) + '\t' +  # unit: sec
+                       str(video_chunk_quality) + '\t' +  # unit: Kbps
+                       str(rebuf) + '\t' +                # unit: sec
+                       str(video_chunk_size) + '\t' +     # unit: Bytes
+                       str(delay) + '\t' +                # unit: ms
+                       str(reward) + '\n')
+
+        log_file.flush()
+
+        # retrieve previous state
+        if len(s_batch) == 0:
+            state = [np.zeros((S_INFO, S_LEN))]
+        else:
+            state = np.array(s_batch[-1], copy=True)
+
+        # dequeue history record
+        state = np.roll(state, -1, axis=1)  # each row left-shift one
+        # this should be S_INFO number of terms
+        state[0, -1] = video_chunk_quality  / float(highest_video_chunk_quality)  # last quality
+        state[1, -1] = buffer_size / BUFFER_NORM_FACTOR
+        state[2, -1] = rebuf
+        state[3, -1] = float(video_chunk_size) / float(delay) / M_IN_K  # Mbyte/s
+        state[4, -1] = np.minimum(video_chunk_remain, CHUNK_TIL_VIDEO_END_CAP) / float(CHUNK_TIL_VIDEO_END_CAP)
+
+        # ===================================MPC ===================================================
+        curr_error = 0  # default assumes that this is the first request so error is 0 since we have never predicted bandwidth
+        if( len(past_bandwidth_ests) > 0):
+            curr_error = abs(past_bandwidth_ests[-1] - state[3, -1])/float(state[3, -1])
+        past_errors.append(curr_error)
+
+        # pick bitrate according to MPC
+        # first get harmonic mean of last n bandwidths
+        past_bandwidths = state[3, -PAST_BW_TO_PREDICT:]
+        # cut the meaning throughput
+        while past_bandwidths[0] == 0.0:
+            past_bandwidths = past_bandwidths[1:]
+
+        bandwidth_sum = 0
+        for past_val in past_bandwidths:
+            bandwidth_sum += (1/float(past_val))
+        harmonic_bandwidth = 1.0/(bandwidth_sum/len(past_bandwidths))
+
+        # future bandwidth prediction
+        # divide by (1+max)  of last PAST_BW_TO_PREDICT
+        max_error = 0
+        error_pos = -PAST_BW_TO_PREDICT
+        if( len(past_errors) < PAST_BW_TO_PREDICT):
+            error_pos = -len(past_errors)
+        max_error = float(max(past_errors[error_pos:]))
+        future_bandwidth = harmonic_bandwidth/(1+max_error)  # robustMPC here
+        past_bandwidth_ests.append(harmonic_bandwidth)
+
+        # future chunks length
+        last_index = int(CHUNK_TIL_VIDEO_END_CAP - video_chunk_remain - 1)
+
+        future_chunk_length = MPC_FUTURE_CHUNK_COUNT
+
+        # if future chunk num less than PAST_BW_TO_PREDICT
+        if TOTAL_VIDEO_CHUNKS - 1 - last_index < PAST_BW_TO_PREDICT:
+            future_chunk_length = TOTAL_VIDEO_CHUNKS - last_index -1
+
+        # all possible combinations of MPC_FUTURE_CHUNK_COUNT chunk video qualitys
+        # iterate over list and for each, compute reward and store max reward combination
+        max_reward = -100000000
+        best_combo = ()
+        start_buffer = buffer_size
+        for full_combo in CHUNK_COMBO_OPTIONS:
+            combo = full_combo[0:future_chunk_length]
+            curr_rebuffer_time = 0
+            curr_buffer = start_buffer
+            quality_sum = 0
+            smoothness_diffs = 0
+            last_quality = video_chunk_quality
+            for position in range(0, len(combo)):
+                chunk_quality = combo[position]
+                index = last_index + position + 1
+                curr_video_chunk_size,curr_video_chunk_quality = net_env.get_video_chunk_size_quality(quality_in_fov=chunk_quality, quality_out_fov=-1, chunk_index=index)
+                download_time = (curr_video_chunk_size/1000000.0) / future_bandwidth
+                if curr_buffer < download_time:
+                    curr_rebuffer_time += (download_time - curr_buffer)
+                    curr_buffer = 0
+                else:
+                    curr_buffer -= download_time
+
+                curr_buffer += VIDEO_CHUNK_LEN
+                quality_sum += curr_video_chunk_quality
+                smoothness_diffs += abs(curr_video_chunk_quality - last_quality)
+                last_quality = curr_video_chunk_quality
+
+            reward = (quality_sum/1000.0) - REBUF_PENALTY * curr_rebuffer_time - ( smoothness_diffs/1000.0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__ == '__main__':
+    main()

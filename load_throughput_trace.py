@@ -18,10 +18,12 @@
 import os
 
 COOKED_TRACE_FOLDER = './cooked_bw_trace/'
+FILE_PFEFIX = 'scaled_'
 
 
 def load_throughput_trace(cooked_trace_folder=COOKED_TRACE_FOLDER):
     cooked_files = os.listdir(cooked_trace_folder)
+    cooked_files = [file for file in cooked_files if file.startswith(FILE_PFEFIX)]
     all_cooked_time = []
     all_cooked_bw = []
     all_file_names = []
