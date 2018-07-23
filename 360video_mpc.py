@@ -3,6 +3,8 @@
 
 # file name: 360videompc.py
 # Intro: this program simulate the tiled 360 video streaming using MPC ABR algorithm
+# When current buffer occupancy <= B1(fov prediction limitation), we transmit only the tiles within fov,
+# WHen current buffer occupancr > B1 and < B2, we transmit the whole lowest quality tiles
 
 # author: shenwang@sjtu.edu.cn
 # date: 2018/7/20
@@ -21,10 +23,11 @@ PAST_FRAME = 15  # take how many frames in the past to predict the next chunk fo
 TILES_BIT_RATE = [200, 400, 600, 800, 1000]  # Kbps
 A_DIM = 5
 MPC_FUTURE_CHUNK_COUNT = 4
+MILLISECONDS_IN_SECOND = 1000.0
 PAST_BW_TO_PREDICT = 5
-BUFFER_NORM_FACTOR = 10.0
+BUFFER_NORM_FACTOR = 1.0
 CHUNK_TIL_VIDEO_END_CAP = 120.0
-TOTAL_VIDEO_CHUNKS = 120.0
+TOTAL_VIDEO_CHUNKS = 120
 M_IN_K = 1000.0
 REBUF_PENALTY = 4.0
 SMOOTH_PENALTY = 1
@@ -33,6 +36,8 @@ RANDOOM_SEED = 42
 RAND_RANGE = 1000000
 GOP = 15  # gop=15 frames
 VIDEO_CHUNK_LEN = 0.5  # sec
+BUFFER_THRESH = 8.0   # B2
+BUFFER_THRESH_FOV = 2.0  # B1
 
 SUMMARY_DIR = './results'
 LOG_FILE = './results/log_sim_mpc'
@@ -82,6 +87,9 @@ def main():
 
     while True:  # serve video forever
         # the action is from the last decision
+        if net_env.video_chunk_counter == 0:
+            print(all_file_names[net_env.bw_trace_idx])
+
         delay, sleep_time, buffer_size, rebuf, \
             video_chunk_size, \
             end_of_video, video_chunk_remain, \
@@ -116,6 +124,7 @@ def main():
         # log time_stamp, video_chunk_quality, buffer_size, reward
         log_file.write(str(time_stamp / M_IN_K) + '\t' +  # unit: sec
                        str(video_chunk_quality) + '\t' +  # unit: Kbps
+                       str(buffer_size) + '\t' +          # unit: sec
                        str(rebuf) + '\t' +                # unit: sec
                        str(video_chunk_size) + '\t' +     # unit: Bytes
                        str(delay) + '\t' +                # unit: ms
@@ -172,8 +181,8 @@ def main():
         future_chunk_length = MPC_FUTURE_CHUNK_COUNT
 
         # if future chunk num less than PAST_BW_TO_PREDICT
-        if TOTAL_VIDEO_CHUNKS - 1 - last_index < PAST_BW_TO_PREDICT:
-            future_chunk_length = TOTAL_VIDEO_CHUNKS - last_index -1
+        if TOTAL_VIDEO_CHUNKS - 1 - last_index < MPC_FUTURE_CHUNK_COUNT:
+            future_chunk_length = int(TOTAL_VIDEO_CHUNKS - last_index -1)
 
         # all possible combinations of MPC_FUTURE_CHUNK_COUNT chunk video qualitys
         # iterate over list and for each, compute reward and store max reward combination
@@ -190,7 +199,15 @@ def main():
             for position in range(0, len(combo)):
                 chunk_quality = combo[position]
                 index = last_index + position + 1
-                curr_video_chunk_size,curr_video_chunk_quality = net_env.get_video_chunk_size_quality(quality_in_fov=chunk_quality, quality_out_fov=-1, chunk_index=index)
+
+                # decide all LT or only FoV
+                if curr_buffer <= BUFFER_THRESH_FOV:
+                    curr_video_chunk_size, curr_video_chunk_quality = net_env.get_video_chunk_size_quality(
+                        quality_in_fov=chunk_quality, quality_out_fov=-1, chunk_index=index)
+                else:
+                    curr_video_chunk_size, curr_video_chunk_quality = net_env.get_video_chunk_size_quality(
+                        quality_in_fov=0, quality_out_fov=0, chunk_index=index)
+
                 download_time = (curr_video_chunk_size/1000000.0) / future_bandwidth
                 if curr_buffer < download_time:
                     curr_rebuffer_time += (download_time - curr_buffer)
@@ -203,7 +220,55 @@ def main():
                 smoothness_diffs += abs(curr_video_chunk_quality - last_quality)
                 last_quality = curr_video_chunk_quality
 
-            reward = (quality_sum/1000.0) - REBUF_PENALTY * curr_rebuffer_time - ( smoothness_diffs/1000.0)
+            reward = quality_sum/1000.0 \
+                     - REBUF_PENALTY * curr_rebuffer_time \
+                     - SMOOTH_PENALTY * smoothness_diffs / 1000.0
+
+            if reward >= max_reward:
+                if best_combo != () and best_combo[0] < combo[0]:
+                    best_combo = combo
+                else:
+                    best_combo = combo
+                max_reward = reward
+
+                send_data = 0
+                if best_combo != ():
+                    send_data = best_combo[0]
+        bit_rate = send_data
+
+        s_batch.append(state)
+
+        # ===================================MPC end ==================================================
+
+        if end_of_video:
+            log_file.write('\n')
+            log_file.close()
+
+            last_bit_rate = DEFAULT_QUALITY
+            bit_rate = DEFAULT_QUALITY  # use the default action here
+
+            del s_batch[:]
+            del a_batch[:]
+            del r_batch[:]
+
+            action_vec = np.zeros(A_DIM)
+            action_vec[bit_rate] = 1
+
+            s_batch.append(np.zeros((S_INFO, S_LEN)))
+            a_batch.append(action_vec)
+            entropy_record = []
+
+            print("trace count"+str(video_count))
+            video_count += 1
+
+            if video_count >= len(all_file_names):
+                break
+
+            log_path = LOG_FILE + '_' + all_file_names[net_env.bw_trace_idx]
+            log_file = open(log_path, 'wb')
+
+
+
 
 
 

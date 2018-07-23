@@ -21,7 +21,7 @@ DEFAULT_QUALITY = 0  # default quality
 RANDOOM_SEED = 42
 BITRATE_LEVELS = 5
 VIDEO_CHUNK_LEN = 0.5 * MILLISECONDS_IN_SECOND  # millisec, every time add this amount to buffer
-BUFFER_THRESH = 5.0 * MILLISECONDS_IN_SECOND  # B2
+BUFFER_THRESH = 8.0 * MILLISECONDS_IN_SECOND  # B2
 BUFFER_THRESH_FOV = 2.0 * MILLISECONDS_IN_SECOND  # B1
 IS_ONE_CHUNK_DONE = 0  # indicated all tiles of one chunk is fetched
 PACKET_PAYLOAD_PORTION = 0.95
@@ -158,6 +158,8 @@ class Environment:
         """
         assert quality >= 0
         assert quality < BITRATE_LEVELS
+
+        print("fetch video" + str(self.video_chunk_counter))
 
         # video_chunk_size_fov_out_fov = self.get_video_chunk_size_fov_out_fov(quality_in_fov=0, quality_out_fov=-1)
         # print('quality_in_fov=0, quality_out_fov=-1  '+str(video_chunk_size_fov_out_fov))
@@ -296,7 +298,7 @@ class Environment:
             self.video_chunk_counter = 0
 
             self.bw_trace_idx += 1
-            if self.bw_trace_idx > len(self.all_cooked_time):
+            if self.bw_trace_idx >= len(self.all_cooked_time):
                 self.bw_trace_idx = 0
 
             self.cooked_time = self.all_cooked_time[self.bw_trace_idx]

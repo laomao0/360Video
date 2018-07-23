@@ -22,7 +22,7 @@ BITS_IN_BYTE = 8.0
 MBITS_IN_BITS = 1000000.0
 MILLISECONDS_IN_SECONDS = 1000.0
 PACKET_SIZE = 1500.0 # bytes
-MEAN_BW = 6  # scaled mean bw 6 Mbps
+MEAN_BW = 10  #
 
 
 trace_files = os.listdir(FILE_PATH)
@@ -38,13 +38,15 @@ for file in trace_files:
             throughput = float(parse[1])
             time_all.append(time)
             bandwidth_all.append(throughput)
+            if time >= 70.0:
+                break
 
     bandwidth_all = np.array(bandwidth_all)
     time_all = np.array(time_all)
     mean_bw = np.mean(bandwidth_all)
     scale = MEAN_BW / mean_bw
 
-    scaled_bandwidth_all = bandwidth_all * scale
+    scaled_bandwidth_all = bandwidth_all * scale + 0.5
 
     # plt.plot(time_all, scaled_bandwidth_all)
     # plt.xlabel('Time (second)')
@@ -53,6 +55,10 @@ for file in trace_files:
     with open(FILE_PATH + 'scaled_' + file, 'wb') as fw_obj:
         for i in range(scaled_bandwidth_all.size):
             fw_obj.write(str(time_all[i]) + ' ' + str(scaled_bandwidth_all[i]) +'\n')
+
+print("scale over")
+
+
 
 
 
