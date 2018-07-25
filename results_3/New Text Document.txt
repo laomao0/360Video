@@ -1,0 +1,14 @@
+scale_bandwidth.py
+MEAN_BW = 8  #
+
+360video_mpc.py
+BUFFER_THRESH = 10.0   # B2
+BUFFER_THRESH_FOV = 2.0  # B1
+
+fixed_env.py
+BUFFER_THRESH = 8.0 * MILLISECONDS_IN_SECOND  # B2
+BUFFER_THRESH_FOV = 2.0 * MILLISECONDS_IN_SECOND  # B1
+
+Rebuf_p= 50
+smooth_p = 5
+

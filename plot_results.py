@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-RESULTS_FOLDER = './results/'
+RESULTS_FOLDER = './results_4/'
 NUM_BINS = 100
 BITS_IN_BYTE = 8.0
 MILLISEC_IN_SEC = 1000.0
@@ -10,12 +10,12 @@ M_IN_B = 1000000.0
 VIDEO_LEN = 120
 VIDEO_BIT_RATE = [200, 400, 600, 800, 1000]  # one tile bitrate Kbps
 K_IN_M = 1000.0
-REBUF_P = 4.0
+REBUF_P = 5.0
 SMOOTH_P = 1
 COLOR_MAP = plt.cm.jet  # nipy_spectral, Set1,Paired
 SIM_DP = 'sim_dp'
 # SCHEMES = ['BB', 'RB', 'FIXED', 'FESTIVE', 'BOLA', 'RL',  'sim_rl', SIM_DP]
-SCHEMES = ['sim_mpc']
+SCHEMES = ['sim_bb','sim_mpc']
 
 
 def main():
@@ -79,6 +79,7 @@ def main():
                         last_q = q
 
             else:
+
                 for line in f:
                     parse = line.split()
                     if len(parse) <= 1:

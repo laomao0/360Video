@@ -15,24 +15,23 @@ BITS_IN_BYTE = 8.0
 MILLISECONDS_IN_SECOND = 1000.0
 B_IN_MB = 1000000.0
 TOTAL_VIDEO_CHUNKS = 120.0
-REBUF_PENALTY = 4.0
-SMOOTH_PENALTY = 1
-DEFAULT_QUALITY = 0  # default quality
 RANDOOM_SEED = 42
 BITRATE_LEVELS = 5
 VIDEO_CHUNK_LEN = 0.5 * MILLISECONDS_IN_SECOND  # millisec, every time add this amount to buffer
-BUFFER_THRESH = 8.0 * MILLISECONDS_IN_SECOND  # B2
-BUFFER_THRESH_FOV = 2.0 * MILLISECONDS_IN_SECOND  # B1
+
 IS_ONE_CHUNK_DONE = 0  # indicated all tiles of one chunk is fetched
 PACKET_PAYLOAD_PORTION = 0.95
 DRAIN_BUFFER_SLEEP_TIME = 500.0  # millisec
-LINK_RTT = 80  # millisec
+LINK_RTT = 10  # millisec
 PACKET_SIZE = 1500  # one Package has 1500 bytes
 NUM_FRAMES = 1800
 TOTAL_TIES = 32
 GOP = 15  # gop=15 frames
 FPS = 30
 TILES_BIT_RATE = [200, 400, 600, 800, 1000]  # Kbps
+
+BUFFER_THRESH = 10.0 * MILLISECONDS_IN_SECOND  # B2
+BUFFER_THRESH_FOV = 2.0 * MILLISECONDS_IN_SECOND  # B1
 
 
 class Environment:
@@ -127,27 +126,37 @@ class Environment:
         predicted_fov_pos = range(max_frames_one_chunk - GOP, max_frames_one_chunk)
         video_chunk_size_fov = 0
         video_chunk_size_out_fov = 0
-        video_chunk_quality_out_fov = 0
-        video_chunk_quality_fov = 0
+        video_chunk_quality_fov_frames = 0
         for frame in predicted_fov_pos:
             tiles_set_fov = self.all_cooked_tiles[frame]
+            num_tiles_set_fov = len(tiles_set_fov)
+            video_chunk_quality_fov = 0
+            video_chunk_quality_out_fov = 0
             for tile in tiles_set_fov:
                 tile_chunk_size = self.get_tile_chunk_size(tile, quality_in_fov)
                 tile_chunk_size_per_frame = tile_chunk_size / GOP
                 video_chunk_size_fov = video_chunk_size_fov + tile_chunk_size_per_frame
                 video_chunk_quality_fov += TILES_BIT_RATE[quality_in_fov]
+
+
             if quality_out_fov == -1:
                 video_chunk_size_out_fov = 0
                 video_chunk_quality_out_fov = 0
+                num_tiles_set_out_fov = 0
             else:
                 tiles_set_out_fov = [i for i in range(1, TOTAL_TIES + 1) if i not in tiles_set_fov]
+                num_tiles_set_out_fov = len(tiles_set_out_fov)
                 for tile in tiles_set_out_fov:
                     tile_chunk_size = self.get_tile_chunk_size(tile, quality_out_fov)
                     tile_chunk_size_per_frame = tile_chunk_size / GOP
                     video_chunk_size_out_fov = video_chunk_size_out_fov + tile_chunk_size_per_frame
                     video_chunk_quality_out_fov += TILES_BIT_RATE[quality_out_fov]
+
+            video_chunk_quality_fov_frames += (video_chunk_quality_fov + video_chunk_quality_out_fov) / \
+                                                (num_tiles_set_fov + num_tiles_set_out_fov)
+
         all_video_chunk_size = video_chunk_size_out_fov + video_chunk_size_fov
-        all_video_chunk_quality = (video_chunk_quality_fov + video_chunk_quality_out_fov)/GOP
+        all_video_chunk_quality = video_chunk_quality_fov_frames/GOP
         return all_video_chunk_size, all_video_chunk_quality
 
     def fetch_video_chunk(self, quality):
