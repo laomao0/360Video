@@ -9,14 +9,14 @@ global num_w
 global num_h
 
 video_name = 'diving_saliency.mp4';
-otuput_name = 'diving_saliency.txt'
-fov_file_name = 'C:\Users\Wangshen\Desktop\video\src\360Video\cooked_fov_trace\diving_user01_tile.csv';
+otuput_name = 'diving_saliency'
+fov_file_name = 'C:\Users\Wangshen\Desktop\video\src\360Video\cooked_fov_trace\diving_user01_tile_enlarged.csv';
 obj = VideoReader(video_name)
 num_frames = obj.NumberOfFrames;
 disp(['frame number: ', num2str(num_frames)])
 
 % read the fov tile information
-%divinguser01tile = importfile(fov_file_name, 2, 1801);
+divinguser01tile = importfile(fov_file_name, 2, 1801);
 
 % function: get the saliency value of one frame image
 Width_tile = 480;

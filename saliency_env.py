@@ -33,6 +33,8 @@ TILES_BIT_RATE = [200, 400, 600, 800, 1000]  # Kbps
 BUFFER_THRESH = 10.0 * MILLISECONDS_IN_SECOND  # B2
 BUFFER_THRESH_FOV = 2.0 * MILLISECONDS_IN_SECOND  # B1
 
+MU = 0
+
 
 class Environment:
     """
@@ -71,6 +73,7 @@ class Environment:
 
         self.virtual_bw_ptr = self.bw_ptr
         self.virtual_last_bw_time = self.last_bw_time
+        self.buffer = []
 
     def get_tile_chunk_size(self, tile_num, quality):
         """
@@ -132,6 +135,7 @@ class Environment:
         video_chunk_size_fov = 0
         video_chunk_size_out_fov = 0
         video_chunk_quality_fov_frames = 0
+        video_chunk_quality_all_lt_frames = 0
         for frame in predicted_fov_pos:
             tiles_set_fov = self.all_cooked_tiles[frame]
             num_tiles_set_fov = len(tiles_set_fov)
@@ -139,11 +143,13 @@ class Environment:
             video_chunk_quality_out_fov = 0
             video_tiles_quality_index = 0
             for tile in tiles_set_fov:
-                tile_chunk_size = self.get_tile_chunk_size(tile, quality_in_fov[video_tiles_quality_index])
+                tile_chunk_size = self.get_tile_chunk_size(tile, int(quality_in_fov[0, video_tiles_quality_index]))
                 tile_chunk_size_per_frame = tile_chunk_size / GOP
                 video_chunk_size_fov = video_chunk_size_fov + tile_chunk_size_per_frame
-                video_chunk_quality_fov += TILES_BIT_RATE[quality_in_fov[video_tiles_quality_index]]
+                video_chunk_quality_fov += TILES_BIT_RATE[int(quality_in_fov[0, video_tiles_quality_index])] \
+                                           * self.all_cooked_saliency[frame][video_tiles_quality_index]
                 video_tiles_quality_index += 1
+            video_chunk_quality_fov += MU * TILES_BIT_RATE[int(np.min(quality_in_fov))]  # get function f
 
 
             if quality_out_fov == -1:
@@ -159,25 +165,35 @@ class Environment:
                     video_chunk_size_out_fov = video_chunk_size_out_fov + tile_chunk_size_per_frame
                     video_chunk_quality_out_fov += TILES_BIT_RATE[quality_out_fov]
 
-            video_chunk_quality_fov_frames += (video_chunk_quality_fov + video_chunk_quality_out_fov) / \
-                                                (num_tiles_set_fov + num_tiles_set_out_fov)
+            # use the weighted some
+            video_chunk_quality_fov_frames += round(video_chunk_quality_fov)
+
+            if quality_out_fov == -1: # do not transmit tiles out of fov
+                video_chunk_quality_all_lt_frames = 0
+            else: # transmit the lowest all LT
+                video_chunk_quality_all_lt_frames += (video_chunk_quality_out_fov / num_tiles_set_out_fov)
 
         all_video_chunk_size = video_chunk_size_out_fov + video_chunk_size_fov
-        all_video_chunk_quality = video_chunk_quality_fov_frames/GOP
+        if quality_out_fov == -1:  # do not transmit tiles out of fov
+            all_video_chunk_quality = video_chunk_quality_fov_frames/GOP
+        else:  # transmit the lowest all LT
+            all_video_chunk_quality = video_chunk_quality_all_lt_frames/GOP
         return all_video_chunk_size, all_video_chunk_quality
 
-    def fetch_video_chunk(self, quality):
-        """
-        Download a chunk, which contains multiple tiles per frames
-        :param quality: the quality set of chunk (np array)
-        :return:
-        """
-        quality_sets_len = len(quality)
+    def fetch_video_chunk(self, quality_in_fov, quality_out_fov, chunk_idx=''):
 
-        assert quality.all >= 0
-        assert quality.all < BITRATE_LEVELS
+        quality_sets_len = quality_in_fov.size
 
-        assert  quality_sets_len == len(self.all_cooked_tiles[self.video_chunk_counter])
+        # get the predicted FOV tiles of the chunk
+        if chunk_idx == '':
+            chunk_idx = self.video_chunk_counter
+        else:
+            pass
+
+        assert quality_in_fov.all() >= 0
+        assert quality_in_fov.all() < BITRATE_LEVELS
+
+        assert quality_sets_len == len(self.all_cooked_tiles[self.video_chunk_counter * GOP])
 
         print("fetch video" + str(self.video_chunk_counter))
 
@@ -202,40 +218,26 @@ class Environment:
         # video_chunk_size_fov_out_fov = self.get_video_chunk_size_fov_out_fov(quality_in_fov=4, quality_out_fov=0)
         # print('quality_in_fov=4, quality_out_fov=0  '+str(video_chunk_size_fov_out_fov))
 
-        lowest_quality_set = np.zeros((1, quality_sets_len))
-        highest_quality_set = 4 * np.ones((1, quality_sets_len))
 
-        if self.buffer_size <= BUFFER_THRESH_FOV:
-            # 1 only fov tiles
-            video_chunk_size, video_chunk_quality = self.get_video_chunk_size_quality(quality_in_fov=quality,
-                                                                                   quality_out_fov=-1)
-            # 2 fov and lowest out fov tiles
-            # video_chunk_size, video_chunk_quality = self.get_video_chunk_size_fov_out_fov(quality_in_fov=quality,
-            #                                                                               quality_out_fov=0)
+        # highest_quality_set = 4 * np.ones((1, quality_sets_len))
 
-            # lowest chunk quality use for log reward
-            # 1 only fov tiles
+        # if self.buffer_size <= BUFFER_THRESH_FOV:
+        #     video_chunk_size, video_chunk_quality = self.get_video_chunk_size_quality \
+        #         (quality_in_fov=quality, quality_out_fov=-1)
+        # else:
+        #     video_chunk_size, video_chunk_quality = self.get_video_chunk_size_quality \
+        #         (quality_in_fov=lowest_quality_set, quality_out_fov=0)
 
-            lowest_video_chunk_size, lowest_video_chunk_quality = self.get_video_chunk_size_quality(quality_in_fov=lowest_quality_set,
-                                                                                                  quality_out_fov=-1)
-            # 2 fov and lowest out fov tiles
-            # lowest_video_chunk_size, lowest_video_chunk_quality = self.get_video_chunk_size_fov_out_fov(quality_in_fov=0,
-            #                                                                                           quality_out_fov=0)
+        video_chunk_size, video_chunk_quality = self.get_video_chunk_size_quality \
+            (quality_in_fov=quality_in_fov, quality_out_fov=quality_out_fov, chunk_index=chunk_idx)
 
-            # highest chunk quality use for log reward
-            # 1 only fov tiles
+        # the follwoing code select the already buffered chunk to update
 
-            highest_video_chunk_size, highest_video_chunk_quality = self.get_video_chunk_size_quality(quality_in_fov=highest_quality_set,
-                                                                                                  quality_out_fov=-1)
-            # 2 fov and lowest out fov tiles
-            # highest_video_chunk_size, highest_video_chunk_quality = self.get_video_chunk_size_fov_out_fov(quality_in_fov=4,
-            #                                                                                           quality_out_fov=0)
-        else:
-            video_chunk_size, video_chunk_quality = self.get_video_chunk_size_quality(quality_in_fov=lowest_quality_set,
-                                                                                      quality_out_fov=0)
-            lowest_video_chunk_quality = video_chunk_quality
-            highest_video_chunk_quality = video_chunk_quality
-
+        # lowest_video_chunk_size, lowest_video_chunk_quality = self.get_video_chunk_size_quality \
+        #     (quality_in_fov=lowest_quality_set, quality_out_fov=-1)
+        #
+        # highest_video_chunk_size, highest_video_chunk_quality = self.get_video_chunk_size_quality \
+        #     (quality_in_fov=highest_quality_set, quality_out_fov=-1)
 
         delay = 0.0  # in ms
         video_chunk_counter_sent = 0  # in bytes
@@ -278,6 +280,22 @@ class Environment:
 
         # add in the new chunk
         self.buffer_size += VIDEO_CHUNK_LEN
+
+        # append new buffered chunk
+        self.buffer.append([self.video_chunk_counter,
+                            'not updated',
+                            VIDEO_CHUNK_LEN])
+
+        # decrease the already buffered chunk,if rebuf > 500 need more pop
+        tmp_delay = delay
+        if self.video_chunk_counter >= 1:
+            if self.buffer[0][2] >= tmp_delay:
+                self.buffer[0][2] = self.buffer[0][2] - tmp_delay
+            else:
+                while self.buffer[0][2] < tmp_delay:
+                    tmp_delay -= self.buffer[0][2]
+                    self.buffer.pop(0)
+                self.buffer[0][2] = self.buffer[0][2] - tmp_delay
 
         # sleep if buffer gets too large
         sleep_time = 0
@@ -341,7 +359,4 @@ class Environment:
                video_chunk_size, \
                end_of_video, \
                video_chunk_remain, \
-               video_chunk_quality, \
-               lowest_video_chunk_quality, \
-               highest_video_chunk_quality
-
+               video_chunk_quality

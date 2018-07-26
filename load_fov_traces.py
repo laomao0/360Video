@@ -22,11 +22,13 @@ import csv
 
 COOKED_TRACE_FOLDER = './cooked_fov_trace/'
 
+FILE_END = '_enlarged.csv'
+
 
 def load_fov_traces(cooked_trace_folder=COOKED_TRACE_FOLDER):
     cooked_files = os.listdir(cooked_trace_folder)
-    cooked_file = cooked_files[0]
-    file_path = cooked_trace_folder + cooked_file
+    cooked_file = [file for file in cooked_files if file.endswith(FILE_END)]
+    file_path = cooked_trace_folder + cooked_file[0]
     with open(file_path, 'r') as f_obj:
         f_csv = csv.reader(f_obj)
         headers = next(f_csv)

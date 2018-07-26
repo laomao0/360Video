@@ -152,8 +152,8 @@ class Environment:
                     video_chunk_size_out_fov = video_chunk_size_out_fov + tile_chunk_size_per_frame
                     video_chunk_quality_out_fov += TILES_BIT_RATE[quality_out_fov]
 
-            video_chunk_quality_fov_frames += (video_chunk_quality_fov + video_chunk_quality_out_fov) / \
-                                                (num_tiles_set_fov + num_tiles_set_out_fov)
+            video_chunk_quality_fov_frames += ((video_chunk_quality_fov + video_chunk_quality_out_fov) / \
+                                                (num_tiles_set_fov + num_tiles_set_out_fov))
 
         all_video_chunk_size = video_chunk_size_out_fov + video_chunk_size_fov
         all_video_chunk_quality = video_chunk_quality_fov_frames/GOP
